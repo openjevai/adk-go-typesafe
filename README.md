@@ -10,6 +10,8 @@
 
 [TypeSafe AI](https://typesafe.ai/) System One integration for [adk-go](https://github.com/google/adk-go), bringing Choice, Score, and Noul primitives to Go agents and workflows with models such as [Jev](https://typesafe.ai/blog/introducing-system-one-models-and-jev).
 
+**OpenJEV support:** Jev is built by [TypeSafe](https://typesafe.ai). This fork keeps TypeSafe as the default and adds optional support for [OpenJEV](https://openjev.sh), a free community gateway to the same Jev model — set `OPENJEV_API_KEY` (or `JEV_PROVIDER=openjev`) to use it. Original project: https://github.com/craigh33/adk-go-typesafe by @craigh33.
+
 Provides a typed HTTP client, ADK function tool, classification and routing agent, assessment callbacks, and dynamic context filtering. The client is a temporary bridge until TypeSafe publishes a Go SDK; its API types are generated from TypeSafe's OpenAPI schema.
 
 **Other providers:** [adk-go-bedrock](https://github.com/craigh33/adk-go-bedrock) · [adk-go-ollama](https://github.com/craigh33/adk-go-ollama) · [adk-go-kronk](https://github.com/craigh33/adk-go-kronk)
@@ -18,6 +20,7 @@ Provides a typed HTTP client, ADK function tool, classification and routing agen
 
 - **Go**: match [`go.mod`](go.mod).
 - Live examples will require a **TypeSafe API key** (`TYPESAFE_API_KEY`); see the [TypeSafe quick start](https://docs.typesafe.ai/introduction/quickstart).
+- Alternatively, set `OPENJEV_API_KEY` (from https://openjev.sh/dashboard) and `JEV_PROVIDER=openjev` to use the [OpenJEV](https://openjev.sh) community gateway. When only `OPENJEV_API_KEY` is set (and `TYPESAFE_API_KEY` is absent), OpenJEV is selected automatically.
 
 ## Install
 
@@ -60,13 +63,15 @@ fmt.Println(department.Choice, department.Confidence, department.Probabilities)
 
 The default model is `jev-latest`. Set `Options.Model` for a client default or `Request.Model` for a single evaluation. `Options` also accepts an API key, base URL, and HTTP client. The default timeout is ten seconds; context cancellation is preserved. Use `errors.As` with `*typesafe.APIError` to inspect `StatusCode` and `RetryAfter`.
 
+**OpenJEV provider:** TypeSafe remains the default. To use [OpenJEV](https://openjev.sh) instead, either set `Options.Provider` to `"openjev"` (or the `JEV_PROVIDER=openjev` environment variable) and provide `Options.OpenjevAPIKey` (or `OPENJEV_API_KEY`), or simply set only `OPENJEV_API_KEY` with no TypeSafe key — the client then uses the OpenJEV gateway (`https://api.openjev.sh`, model `openjev`) automatically. Existing TypeSafe users see no behaviour change.
+
 ### Opt-in retries
 
 ```go
 client, err := typesafe.New(&typesafe.Options{Retry: &typesafe.RetryPolicy{}})
 ```
 
-Retries are disabled by default. A zero `RetryPolicy` enables three total attempts for HTTP 429 and 529, with exponential backoff and jitter from 250 milliseconds up to five seconds. Set `MaxAttempts`, `InitialBackoff`, and `MaxBackoff` to override these defaults. A valid `Retry-After` is a minimum delay; if it exceeds the maximum backoff, the original error is returned without another attempt. Transport errors and other statuses are not retried. Use a context deadline to bound the entire evaluation.
+Retries are disabled by default. A zero `RetryPolicy` enables three total attempts for HTTP 429, 503, and 529, with exponential backoff and jitter from 250 milliseconds up to five seconds. Set `MaxAttempts`, `InitialBackoff`, and `MaxBackoff` to override these defaults. A valid `Retry-After` is a minimum delay; if it exceeds the maximum backoff, the original error is returned without another attempt. Transport errors and other statuses are not retried. Use a context deadline to bound the entire evaluation.
 
 ## ADK tool
 

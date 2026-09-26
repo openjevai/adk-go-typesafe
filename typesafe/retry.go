@@ -14,14 +14,17 @@ const (
 	defaultBackoff    = 250 * time.Millisecond
 	defaultMaxBackoff = 5 * time.Second
 	overloadedStatus  = 529
+	// OpenJEV returns 503 for temporary unavailability, retryable alongside 429 and 529.
+	serviceUnavailableStatus = 503
 )
 
-// RetryPolicy bounds retries for explicit rate-limit and overload responses.
-// A zero policy enables three total attempts with 250ms initial and 5s maximum
-// backoff. Backoff doubles with jitter. A valid Retry-After is a minimum delay;
-// if it exceeds MaxBackoff the original APIError is returned without retrying.
-// Transport errors and other statuses are not retried. Use a context deadline
-// to bound the entire evaluation, including a custom HTTP client's requests.
+// RetryPolicy bounds retries for explicit rate-limit, overload, and temporary
+// unavailability responses. A zero policy enables three total attempts with
+// 250ms initial and 5s maximum backoff. Backoff doubles with jitter. A valid
+// Retry-After is a minimum delay; if it exceeds MaxBackoff the original
+// APIError is returned without retrying. HTTP 429, 503, and 529 are retried;
+// transport errors and other statuses are not. Use a context deadline to bound
+// the entire evaluation, including a custom HTTP client's requests.
 type RetryPolicy struct {
 	MaxAttempts    int
 	InitialBackoff time.Duration
@@ -56,7 +59,9 @@ func (c *Client) sendWithRetry(ctx context.Context, body []byte) ([]byte, error)
 		data, err := c.send(ctx, body)
 		var apiErr *APIError
 		if !errors.As(err, &apiErr) || attempt >= c.retry.MaxAttempts ||
-			(apiErr.StatusCode != http.StatusTooManyRequests && apiErr.StatusCode != overloadedStatus) {
+			(apiErr.StatusCode != http.StatusTooManyRequests &&
+				apiErr.StatusCode != overloadedStatus &&
+				apiErr.StatusCode != serviceUnavailableStatus) {
 			return data, err
 		}
 		delay, retry := c.retry.delay(attempt, apiErr.RetryAfter)

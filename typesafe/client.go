@@ -20,21 +20,52 @@ const (
 	// DefaultModel follows TypeSafe's current Jev model alias.
 	DefaultModel = "jev-latest"
 
+	// OpenjevBaseURL is the OpenJEV community gateway API root.
+	OpenjevBaseURL = "https://api.openjev.sh"
+	// OpenjevModel is the model alias on the OpenJEV gateway.
+	OpenjevModel = "openjev"
+	// OpenjevAPIKeyEnv is the environment variable read for the OpenJEV key.
+	OpenjevAPIKeyEnv = "OPENJEV_API_KEY"
+	// ProviderEnv selects the Jev provider when Options.Provider is empty.
+	ProviderEnv = "JEV_PROVIDER"
+
 	defaultTimeout   = 10 * time.Second
 	maxResponseBytes = 8 << 20
 )
 
+// Provider constants for Options.Provider.
+const (
+	// ProviderTypeSafe uses the TypeSafe direct API (default, unchanged behaviour).
+	ProviderTypeSafe = "typesafe"
+	// ProviderOpenjev uses the OpenJEV community gateway.
+	ProviderOpenjev = "openjev"
+)
+
 // Options configures New. The zero value uses TYPESAFE_API_KEY, the public API,
 // jev-latest, and a ten-second HTTP timeout.
+//
+// OpenJEV is an optional alternative provider — a free community gateway to
+// the same Jev model. Set Provider to "openjev" (or JEV_PROVIDER=openjev) to use
+// it; otherwise TypeSafe stays the default. When Provider is empty, TypeSafe is
+// used if TYPESAFE_API_KEY (or Options.APIKey) is set; OpenJEV is used
+// automatically if only OPENJEV_API_KEY is set.
 type Options struct {
 	APIKey string
 	Model  string
 	// BaseURL is the API root, without /v1/systemone.
 	BaseURL string
+	// Provider selects the Jev provider: "typesafe" (default) or "openjev".
+	// Empty selects TypeSafe when a TypeSafe key is available, otherwise
+	// OpenJEV when OPENJEV_API_KEY is set. JEV_PROVIDER overrides the empty
+	// value at construction time.
+	Provider string
+	// OpenjevAPIKey is the OpenJEV API key, used when Provider is "openjev".
+	// Empty reads OPENJEV_API_KEY from the environment.
+	OpenjevAPIKey string
 	// HTTPClient overrides the default transport and timeout. Redirects are
 	// disabled unless this client supplies its own CheckRedirect policy.
 	HTTPClient *http.Client
-	// Retry enables bounded retries for HTTP 429 and 529. Nil disables retries.
+	// Retry enables bounded retries for HTTP 429, 503, and 529. Nil disables retries.
 	Retry *RetryPolicy
 }
 
@@ -59,23 +90,77 @@ func New(opts *Options) (*Client, error) {
 	if opts != nil {
 		cfg = *opts
 	}
-	if cfg.APIKey == "" {
-		cfg.APIKey = os.Getenv("TYPESAFE_API_KEY")
+	provider := strings.TrimSpace(strings.ToLower(cfg.Provider))
+	if provider == "" {
+		provider = strings.TrimSpace(strings.ToLower(os.Getenv(ProviderEnv)))
 	}
+
+	// Determine which keys are available.
+	typesafeKey := strings.TrimSpace(cfg.APIKey)
+	if typesafeKey == "" {
+		typesafeKey = strings.TrimSpace(os.Getenv("TYPESAFE_API_KEY"))
+	}
+	openjevKey := strings.TrimSpace(cfg.OpenjevAPIKey)
+	if openjevKey == "" {
+		openjevKey = strings.TrimSpace(os.Getenv(OpenjevAPIKeyEnv))
+	}
+
+	switch provider {
+	case ProviderOpenjev:
+		// Explicit OpenJEV selection.
+		if openjevKey == "" {
+			return nil, errors.New("typesafe: OpenJEV provider selected but no API key found; set OPENJEV_API_KEY or Options.OpenjevAPIKey")
+		}
+		cfg.APIKey = openjevKey
+		if strings.TrimSpace(cfg.Model) == "" {
+			cfg.Model = OpenjevModel
+		}
+		if cfg.BaseURL == "" {
+			cfg.BaseURL = OpenjevBaseURL
+		}
+	case ProviderTypeSafe:
+		// Explicit TypeSafe selection (default behaviour).
+		if typesafeKey == "" {
+			return nil, errors.New("typesafe: TypeSafe provider selected but no API key found; set TYPESAFE_API_KEY or Options.APIKey")
+		}
+		cfg.APIKey = typesafeKey
+		if strings.TrimSpace(cfg.Model) == "" {
+			cfg.Model = DefaultModel
+		}
+		if cfg.BaseURL == "" {
+			cfg.BaseURL = DefaultBaseURL
+		}
+	default:
+		// Auto: TypeSafe first (default unchanged), then OpenJEV.
+		if typesafeKey != "" {
+			cfg.APIKey = typesafeKey
+			if strings.TrimSpace(cfg.Model) == "" {
+				cfg.Model = DefaultModel
+			}
+			if cfg.BaseURL == "" {
+				cfg.BaseURL = DefaultBaseURL
+			}
+		} else if openjevKey != "" {
+			cfg.APIKey = openjevKey
+			if strings.TrimSpace(cfg.Model) == "" {
+				cfg.Model = OpenjevModel
+			}
+			if cfg.BaseURL == "" {
+				cfg.BaseURL = OpenjevBaseURL
+			}
+		} else {
+			return nil, errors.New("typesafe: API key is required; set TYPESAFE_API_KEY (or Options.APIKey) for TypeSafe, or OPENJEV_API_KEY for OpenJEV, or set Provider explicitly")
+		}
+	}
+
 	cfg.APIKey = strings.TrimSpace(cfg.APIKey)
 	if cfg.APIKey == "" {
-		return nil, errors.New("typesafe: API key is required; set TYPESAFE_API_KEY or Options.APIKey")
+		return nil, errors.New("typesafe: API key is required")
 	}
 	for _, char := range cfg.APIKey {
 		if char <= ' ' || char >= 127 {
 			return nil, errors.New("typesafe: API key must contain only printable ASCII without whitespace")
 		}
-	}
-	if strings.TrimSpace(cfg.Model) == "" {
-		cfg.Model = DefaultModel
-	}
-	if cfg.BaseURL == "" {
-		cfg.BaseURL = DefaultBaseURL
 	}
 	base, err := url.Parse(cfg.BaseURL)
 	if err != nil || base.Host == "" || (base.Scheme != "https" && base.Scheme != "http") ||
